@@ -1,0 +1,97 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build release jar
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Read project version
+        id: version
+        shell: bash
+        run: |
+          mod_version="$(awk -F= '/^[[:space:]]*mod_version[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' gradle.properties)"
+          minecraft_version="$(awk -F= '/^[[:space:]]*minecraft_version[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' gradle.properties)"
+
+          if [[ -z "$mod_version" || -z "$minecraft_version" ]]; then
+            echo "Failed to read mod_version or minecraft_version from gradle.properties" >&2
+            exit 1
+          fi
+
+          echo "mod_version=$mod_version" >> "$GITHUB_OUTPUT"
+          echo "minecraft_version=$minecraft_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$mod_version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether release is needed
+        id: release_check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists; skipping publish."
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG does not exist; building and publishing."
+          fi
+
+      - name: Make Gradle wrapper executable
+        if: steps.release_check.outputs.should_release == 'true'
+        run: chmod +x ./gradlew
+
+      - name: Build
+        if: steps.release_check.outputs.should_release == 'true'
+        run: ./gradlew build -Dorg.gradle.java.home="$JAVA_HOME"
+
+      - name: Locate release jar
+        if: steps.release_check.outputs.should_release == 'true'
+        id: jar
+        shell: bash
+        run: |
+          mapfile -t jars < <(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-dev.jar' ! -name '*-sources.jar' | sort)
+
+          if [[ "${#jars[@]}" -ne 1 ]]; then
+            echo "Expected exactly one release jar, found ${#jars[@]}:" >&2
+            printf '%s\n' "${jars[@]}" >&2
+            exit 1
+          fi
+
+          echo "path=${jars[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        if: steps.release_check.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          MOD_VERSION: ${{ steps.version.outputs.mod_version }}
+          MINECRAFT_VERSION: ${{ steps.version.outputs.minecraft_version }}
+          JAR_PATH: ${{ steps.jar.outputs.path }}
+        shell: bash
+        run: |
+          gh release create "$TAG" "$JAR_PATH" \
+            --title "GuiScaleSplitter $MOD_VERSION for Minecraft $MINECRAFT_VERSION" \
+            --notes "Built from commit $GITHUB_SHA."
