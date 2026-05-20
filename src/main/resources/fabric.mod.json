@@ -4,9 +4,9 @@
   "version": "${version}",
   "name": "GUI Scale Splitter",
   "description": "",
-  "authors": [ "RedLime" ],
+  "authors": [ "RedLime", "ItzPolar" ],
   "contact": {
-    "repo": "https://github.com/RedLime/GUIScaleSplitter"
+    "repo": "https://github.com/GridlockGG/GUIScaleSplitter"
   },
   "license": "GPL-3.0",
   "environment": "client",
